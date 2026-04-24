@@ -1,0 +1,154 @@
+# =============================================================================
+# TRISH PROJECT - GITIGNORE COMPLET
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# 1. CONFIGURATION & SECRETS
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.template
+
+# ---------------------------------------------------------------------------
+# 2. CACHE & TEMPORAIRES GO PERSONNALISÉS
+# ---------------------------------------------------------------------------
+.gocache/
+.gotmp/
+
+# ---------------------------------------------------------------------------
+# 3. BINAIRES COMPILÉS (Trish)
+# ---------------------------------------------------------------------------
+# Binaires à la racine du projet
+trish
+trish.exe
+trish-cli
+trish-cli.exe
+trish-server
+trish-server.exe
+trish-agent
+trish-agent.exe
+
+# Anciennes versions / copies locales
+v1/
+v2.stable/
+
+# Dossiers de sortie de build courants
+bin/
+build/
+dist/
+out/
+release/
+
+# ---------------------------------------------------------------------------
+# 4. FICHIERS GÉNÉRIQUES GO
+# ---------------------------------------------------------------------------
+# Binaires natifs (pas d'extension)
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Fichiers de test & couverture
+*.test
+*.out
+coverage*
+coverage.html
+*.cover
+
+# Profiling
+*.prof
+*.pprof
+
+# Modules vendorisés (si utilisé)
+vendor/
+
+# ---------------------------------------------------------------------------
+# 5. DOCKER & INFRASTRUCTURE LOCALE
+# ---------------------------------------------------------------------------
+# Données de volumes locaux (si montés en dehors de Docker)
+# data/
+# volumes/
+
+# Fichiers de log locaux
+*.log
+logs/
+
+# ---------------------------------------------------------------------------
+# 6. IDEs & ÉDITEURS DE TEXTE
+# ---------------------------------------------------------------------------
+# VSCode (sauf settings partagés si besoin)
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# JetBrains (GoLand, IntelliJ)
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Vim / Neovim
+*.swp
+*.swo
+*~
+.netrwhist
+
+# Emacs
+*~
+#*#
+.#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ---------------------------------------------------------------------------
+# 7. SYSTÈMES D'EXPLOITATION
+# ---------------------------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
+*.stackdump
+
+# Linux
+*~
+.nfs*
+
+# ---------------------------------------------------------------------------
+# 8. FICHIERS DIVERS & TEMPORAIRES
+# ---------------------------------------------------------------------------
+# Archives
+*.zip
+*.tar.gz
+*.tar
+*.rar
+*.7z
+
+# Dumps / core
+*.dump
+*.core
+core
+
+# Dossiers temporaires
+tmp/
+temp/
+.tmp/
+

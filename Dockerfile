@@ -1,25 +1,23 @@
-# Multi-stage build for Trish
-
-# Stage 1: Builder
 FROM golang:1.21-alpine AS builder
 
 WORKDIR /build
 
-COPY go.mod go.sum ./
-RUN go mod download
-
+COPY go.mod ./
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o trish .
+RUN CGO_ENABLED=0 GOOS=linux go build -o trish .
+RUN CGO_ENABLED=0 GOOS=linux go build -o trish-server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -o trish-agent ./cmd/agent
 
-# Stage 2: Runtime
 FROM alpine:3.18
 
 RUN apk add --no-cache ca-certificates
 
 WORKDIR /app
 
-COPY --from=builder /build/trish .
+COPY --from=builder /build/trish ./
+COPY --from=builder /build/trish-server ./
+COPY --from=builder /build/trish-agent ./
 
 ENTRYPOINT ["./trish"]
 CMD ["list"]

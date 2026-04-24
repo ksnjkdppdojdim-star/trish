@@ -2,23 +2,24 @@ package dir
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
+	"trish/core"
 )
 
-// DirCommand implémente la commande dir
+// DirCommand implemente la commande dir.
 type DirCommand struct {
-	currentDir string
+	state *core.SessionState
 }
 
-// NewDirCommand crée une nouvelle instance
-func NewDirCommand() *DirCommand {
-	cwd, _ := os.Getwd()
-	return &DirCommand{
-		currentDir: cwd,
+// NewDirCommand cree une nouvelle instance.
+func NewDirCommand(state *core.SessionState) *DirCommand {
+	if state == nil {
+		state = core.NewSessionState()
 	}
+
+	return &DirCommand{state: state}
 }
 
 func (dc *DirCommand) Name() string {
@@ -30,18 +31,16 @@ func (dc *DirCommand) Description() string {
 }
 
 func (dc *DirCommand) Execute(args []string) (string, error) {
-	targetDir := dc.currentDir
-
+	targetDir := dc.state.CurrentDir()
 	if len(args) > 0 {
-		// Si un chemin est fourni, utiliser celui-ci
 		if filepath.IsAbs(args[0]) {
 			targetDir = args[0]
 		} else {
-			targetDir = filepath.Join(dc.currentDir, args[0])
+			targetDir = filepath.Join(dc.state.CurrentDir(), args[0])
 		}
 	}
 
-	files, err := ioutil.ReadDir(targetDir)
+	files, err := os.ReadDir(targetDir)
 	if err != nil {
 		return "", fmt.Errorf("failed to list directory: %v", err)
 	}
@@ -51,18 +50,23 @@ func (dc *DirCommand) Execute(args []string) (string, error) {
 
 	var totalSize int64
 	for _, file := range files {
-		mode := file.Mode()
-		if mode.IsDir() {
-			result.WriteString(fmt.Sprintf("%-20s <DIR>       %s\n",
-				file.ModTime().Format("01/02/2006 15:04"),
-				file.Name()))
-		} else {
-			totalSize += file.Size()
-			result.WriteString(fmt.Sprintf("%-20s %12d  %s\n",
-				file.ModTime().Format("01/02/2006 15:04"),
-				file.Size(),
-				file.Name()))
+		info, err := file.Info()
+		if err != nil {
+			continue
 		}
+
+		if info.IsDir() {
+			result.WriteString(fmt.Sprintf("%-20s <DIR>       %s\n",
+				info.ModTime().Format("01/02/2006 15:04"),
+				file.Name()))
+			continue
+		}
+
+		totalSize += info.Size()
+		result.WriteString(fmt.Sprintf("%-20s %12d  %s\n",
+			info.ModTime().Format("01/02/2006 15:04"),
+			info.Size(),
+			file.Name()))
 	}
 
 	result.WriteString(fmt.Sprintf("\nTotal: %d files, %d bytes\n", len(files), totalSize))

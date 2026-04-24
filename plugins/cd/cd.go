@@ -4,19 +4,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"trish/core"
 )
 
-// CdCommand implémente la commande cd
+// CdCommand implemente la commande cd.
 type CdCommand struct {
-	currentDir string
+	state *core.SessionState
 }
 
-// NewCdCommand crée une nouvelle instance
-func NewCdCommand() *CdCommand {
-	cwd, _ := os.Getwd()
-	return &CdCommand{
-		currentDir: cwd,
+// NewCdCommand cree une nouvelle instance.
+func NewCdCommand(state *core.SessionState) *CdCommand {
+	if state == nil {
+		state = core.NewSessionState()
 	}
+
+	return &CdCommand{state: state}
 }
 
 func (cc *CdCommand) Name() string {
@@ -29,20 +31,16 @@ func (cc *CdCommand) Description() string {
 
 func (cc *CdCommand) Execute(args []string) (string, error) {
 	if len(args) == 0 {
-		return cc.currentDir, nil
+		return cc.state.CurrentDir(), nil
 	}
 
 	targetDir := args[0]
-
-	// Gérer les chemins relatifs
 	if !filepath.IsAbs(targetDir) {
-		targetDir = filepath.Join(cc.currentDir, targetDir)
+		targetDir = filepath.Join(cc.state.CurrentDir(), targetDir)
 	}
 
-	// Normaliser le chemin
 	targetDir = filepath.Clean(targetDir)
 
-	// Vérifier que le répertoire existe
 	info, err := os.Stat(targetDir)
 	if err != nil {
 		return "", fmt.Errorf("directory not found: %s", targetDir)
@@ -52,11 +50,11 @@ func (cc *CdCommand) Execute(args []string) (string, error) {
 		return "", fmt.Errorf("not a directory: %s", targetDir)
 	}
 
-	cc.currentDir = targetDir
-	return fmt.Sprintf("Changed directory to: %s", cc.currentDir), nil
+	cc.state.SetCurrentDir(targetDir)
+	return fmt.Sprintf("Changed directory to: %s", cc.state.CurrentDir()), nil
 }
 
-// GetCurrentDir retourne le répertoire courant
+// GetCurrentDir retourne le repertoire courant.
 func (cc *CdCommand) GetCurrentDir() string {
-	return cc.currentDir
+	return cc.state.CurrentDir()
 }

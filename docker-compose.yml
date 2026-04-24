@@ -1,12 +1,23 @@
-version: '3.9'
+version: "3.9"
 
 services:
-  trish:
+  trish-cli:
     build: .
     image: trish:latest
-    container_name: trish-terminal
-    command: /bin/sh
-    stdin_open: true
-    tty: true
+    container_name: trish-cli
+    entrypoint: ["./trish"]
+    command: ["help"]
+
+  trish-server:
+    build: .
+    image: trish:latest
+    container_name: trish-server
+    entrypoint: ["./trish-server"]
+    command: ["--port=9999", "--registry=/data/registry.json"]
+    ports:
+      - "9999:9999"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - trish-data:/data
+
+volumes:
+  trish-data:

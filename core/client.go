@@ -2,83 +2,126 @@ package core
 
 import (
 	"fmt"
+	"net"
 	"time"
 )
 
-// Client représente le client terminal Trish (chez l'admin)
+// Client represente le client admin qui parle au serveur central.
 type Client struct {
-	ID        string
-	Agents    map[string]*Agent
-	EventBus  *EventBus
-	Connected bool
+	ID         string
+	ServerAddr string
+	ServerPort int
+	Timeout    time.Duration
 }
 
-// NewClient crée un nouveau client
-func NewClient() *Client {
+// NewClient cree un client connecte au serveur Trish.
+func NewClient(serverAddr string, serverPort int) *Client {
+	if serverAddr == "" {
+		serverAddr = "127.0.0.1"
+	}
+	if serverPort == 0 {
+		serverPort = 9999
+	}
+
 	return &Client{
-		ID:       fmt.Sprintf("client-%d", time.Now().Unix()),
-		Agents:   make(map[string]*Agent),
-		EventBus: NewEventBus(),
+		ID:         fmt.Sprintf("client-%d", time.Now().UnixNano()),
+		ServerAddr: serverAddr,
+		ServerPort: serverPort,
+		Timeout:    5 * time.Second,
 	}
 }
 
-// DiscoverAgents simule la découverte d'agents sur le réseau (mDNS placeholder)
-func (c *Client) DiscoverAgents() ([]string, error) {
-	var agentIDs []string
-	for id := range c.Agents {
-		agentIDs = append(agentIDs, id)
+func (c *Client) do(msg *Message) (*Message, error) {
+	addr := fmt.Sprintf("%s:%d", c.ServerAddr, c.ServerPort)
+	conn, err := net.DialTimeout("tcp", addr, c.Timeout)
+	if err != nil {
+		return nil, err
 	}
-	return agentIDs, nil
+	defer conn.Close()
+
+	if err := conn.SetDeadline(time.Now().Add(c.Timeout)); err != nil {
+		return nil, err
+	}
+
+	encoder := NewEncoder(conn)
+	decoder := NewDecoder(conn)
+
+	if msg.RequestID == "" {
+		msg.RequestID = NewRequestID("cli")
+	}
+
+	if err := encoder.Encode(msg); err != nil {
+		return nil, err
+	}
+
+	var resp Message
+	if err := decoder.Decode(&resp); err != nil {
+		return nil, err
+	}
+
+	if resp.Error != "" {
+		return nil, fmt.Errorf(resp.Error)
+	}
+
+	return &resp, nil
 }
 
-// ConnectToAgent se connecte à un agent spécifique
-func (c *Client) ConnectToAgent(agentID string) error {
-	agent, exists := c.Agents[agentID]
-	if !exists {
-		return fmt.Errorf("agent %s not found", agentID)
+// ListAgents retourne la liste des agents connus du serveur.
+func (c *Client) ListAgents() ([]AgentRegistryEntry, error) {
+	resp, err := c.do(&Message{Type: MessageTypeCLIList})
+	if err != nil {
+		return nil, err
 	}
-
-	if !agent.Connected {
-		return fmt.Errorf("agent %s is not connected", agentID)
-	}
-
-	c.EventBus.Publish(&Event{
-		Type:      EventAgentConnected,
-		Timestamp: time.Now(),
-		Source:    c.ID,
-		Message:   fmt.Sprintf("Connected to agent %s", agentID),
-		Data:      map[string]interface{}{"agent_id": agentID},
-	})
-
-	return nil
+	return resp.Agents, nil
 }
 
-// ExecuteOnAgent exécute une commande sur un agent distant
+// GetAgent retourne les informations d'un agent.
+func (c *Client) GetAgent(agentID string) (*AgentRegistryEntry, []string, error) {
+	resp, err := c.do(&Message{Type: MessageTypeCLIInfo, AgentID: agentID})
+	if err != nil {
+		return nil, nil, err
+	}
+	return resp.Agent, resp.Commands, nil
+}
+
+// ExecuteOnAgent execute une commande via le serveur central.
 func (c *Client) ExecuteOnAgent(agentID string, cmdName string, args []string) (string, error) {
-	agent, exists := c.Agents[agentID]
-	if !exists {
-		return "", fmt.Errorf("agent %s not found", agentID)
+	resp, err := c.do(&Message{
+		Type:    MessageTypeCLIExec,
+		AgentID: agentID,
+		Command: cmdName,
+		Args:    args,
+	})
+	if err != nil {
+		return "", err
 	}
-
-	if !agent.Connected {
-		return "", fmt.Errorf("agent %s is disconnected", agentID)
+	if resp.Error != "" {
+		return "", fmt.Errorf(resp.Error)
 	}
-
-	return agent.ExecuteCommand(cmdName, args)
+	return resp.Result, nil
 }
 
-// ListAgents retourne la liste des agents connus
-func (c *Client) ListAgents() []string {
-	var agents []string
-	for id, agent := range c.Agents {
-		if agent.Connected {
-			agents = append(agents, fmt.Sprintf("%s (%s@%s:%d)", id, agent.Hostname, agent.IPAddress, agent.Port))
-		}
+// PingAgent verifie qu'un agent repond via le serveur.
+func (c *Client) PingAgent(agentID string) (string, error) {
+	resp, err := c.do(&Message{
+		Type:    MessageTypeCLIPing,
+		AgentID: agentID,
+	})
+	if err != nil {
+		return "", err
 	}
-	return agents
+	return resp.Result, nil
 }
 
-// AddAgent ajoute un agent au client
-func (c *Client) AddAgent(agent *Agent) {
-	c.Agents[agent.ID] = agent
+// ControlAgent envoie une action d'administration a un agent.
+func (c *Client) ControlAgent(agentID, control string) (string, error) {
+	resp, err := c.do(&Message{
+		Type:    MessageTypeCLIAgentControl,
+		AgentID: agentID,
+		Control: control,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Result, nil
 }

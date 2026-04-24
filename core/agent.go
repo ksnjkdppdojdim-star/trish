@@ -21,8 +21,11 @@ type Agent struct {
 
 // NewAgent crée un nouvel agent
 func NewAgent(hostname string) *Agent {
-	actualHostname, _ := os.Hostname()
-	
+	actualHostname := hostname
+	if actualHostname == "" {
+		actualHostname, _ = os.Hostname()
+	}
+
 	return &Agent{
 		ID:            generateAgentID(actualHostname),
 		Hostname:      actualHostname,
@@ -48,7 +51,9 @@ func (a *Agent) GetLocalIP() (string, error) {
 
 // Start démarre l'agent (initialisation)
 func (a *Agent) Start() error {
-	a.GetLocalIP()
+	if _, err := a.GetLocalIP(); err != nil {
+		a.IPAddress = "127.0.0.1"
+	}
 	a.Connected = true
 	a.LastHeartbeat = time.Now()
 
