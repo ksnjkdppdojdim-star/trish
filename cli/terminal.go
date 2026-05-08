@@ -52,6 +52,8 @@ func Run(args []string) int {
 			return 1
 		}
 		return runAgentControl(client, remaining[1], remaining[2])
+	case "plugin":
+		return runPlugin(client, remaining[1:])
 	case "shell":
 		return runShell(client)
 	case "start":
@@ -73,12 +75,12 @@ func Run(args []string) int {
 func runList(client *core.Client) int {
 	agents, err := client.ListAgents()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, red(err.Error()))
 		return 1
 	}
 
 	if len(agents) == 0 {
-		fmt.Println("No agents registered")
+		fmt.Println(dim("No agents registered"))
 		return 0
 	}
 
@@ -86,9 +88,17 @@ func runList(client *core.Client) int {
 		return agents[i].ID < agents[j].ID
 	})
 
+	rows := make([][]string, 0, len(agents))
 	for _, agent := range agents {
-		fmt.Printf("%s\t%s\t%s:%d\tconnected=%t\tstatus=%s\n", agent.ID, agent.Hostname, agent.IPAddress, agent.Port, agent.Connected, defaultStatus(agent.Status))
+		rows = append(rows, []string{
+			cyan(agent.ID),
+			agent.Hostname,
+			fmt.Sprintf("%s:%d", agent.IPAddress, agent.Port),
+			yesNo(agent.Connected),
+			statusLabel(agent.Status, agent.Connected),
+		})
 	}
+	printTable([]string{"Agent", "Hostname", "Address", "Connected", "Status"}, rows)
 
 	return 0
 }
@@ -96,26 +106,29 @@ func runList(client *core.Client) int {
 func runInfo(client *core.Client, agentID string) int {
 	agent, commands, err := client.GetAgent(agentID)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, red(err.Error()))
 		return 1
 	}
 
-	fmt.Printf("Agent ID: %s\n", agent.ID)
-	fmt.Printf("Hostname: %s\n", agent.Hostname)
-	fmt.Printf("Address: %s:%d\n", agent.IPAddress, agent.Port)
-	fmt.Printf("Connected: %t\n", agent.Connected)
-	fmt.Printf("Status: %s\n", defaultStatus(agent.Status))
-	fmt.Printf("Last Seen: %s\n", agent.LastSeen.Format("2006-01-02 15:04:05"))
+	fmt.Println(bold(cyan(agent.ID)))
+	printTable([]string{"Field", "Value"}, [][]string{
+		{"Hostname", agent.Hostname},
+		{"Address", fmt.Sprintf("%s:%d", agent.IPAddress, agent.Port)},
+		{"Connected", yesNo(agent.Connected)},
+		{"Status", statusLabel(agent.Status, agent.Connected)},
+		{"Last Seen", agent.LastSeen.Format("2006-01-02 15:04:05")},
+	})
 
 	if len(commands) == 0 {
-		fmt.Println("Commands: none")
+		fmt.Println(dim("Commands: none"))
 		return 0
 	}
 
 	sort.Strings(commands)
-	fmt.Println("Commands:")
+	fmt.Println()
+	fmt.Println(bold("Commands"))
 	for _, command := range commands {
-		fmt.Printf("  - %s\n", command)
+		fmt.Printf("  %s\n", cyan(command))
 	}
 
 	return 0
@@ -124,7 +137,7 @@ func runInfo(client *core.Client, agentID string) int {
 func runExec(client *core.Client, agentID string, command string, args []string) int {
 	result, err := client.ExecuteOnAgent(agentID, command, args)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, red(err.Error()))
 		return 1
 	}
 
@@ -135,11 +148,11 @@ func runExec(client *core.Client, agentID string, command string, args []string)
 func runPing(client *core.Client, agentID string) int {
 	result, err := client.PingAgent(agentID)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, red(err.Error()))
 		return 1
 	}
 
-	fmt.Println(result)
+	fmt.Println(green(result))
 	return 0
 }
 
@@ -147,23 +160,24 @@ func runAgentControl(client *core.Client, control string, agentID string) int {
 	switch control {
 	case "freeze", "unfreeze", "stop", "restart":
 	default:
-		fmt.Fprintf(os.Stderr, "unsupported agent control: %s\n", control)
+		fmt.Fprintf(os.Stderr, "%s %s\n", red("unsupported agent control:"), control)
 		return 1
 	}
 
 	result, err := client.ControlAgent(agentID, control)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, red(err.Error()))
 		return 1
 	}
 
-	fmt.Println(result)
+	fmt.Println(green(result))
 	return 0
 }
 
 func runShell(client *core.Client) int {
-	fmt.Println("Trish shell")
-	fmt.Println("Commands: list, use <agent>, clear, current, info [agent], ping [agent], exec [agent] <cmd> [args], agent <freeze|unfreeze|stop|restart> [agent], start gui, help, exit")
+	printBanner()
+	printCommandHint()
+	fmt.Println()
 
 	scanner := bufio.NewScanner(os.Stdin)
 	activeAgent := ""
@@ -183,7 +197,7 @@ func runShell(client *core.Client) int {
 		}
 
 		if line == "help" {
-			fmt.Println("list | use <agent> | clear | current | info [agent] | ping [agent] | exec [agent] <cmd> [args] | agent <freeze|unfreeze|stop|restart> [agent] | start gui | exit")
+			printCommandHint()
 			continue
 		}
 
@@ -195,28 +209,28 @@ func runShell(client *core.Client) int {
 		switch fields[0] {
 		case "use", "select", "switch":
 			if len(fields) != 2 {
-				fmt.Println("usage: use <agent-id>")
+				fmt.Println(yellow("usage: use <agent-id>"))
 				continue
 			}
 			activeAgent = fields[1]
-			fmt.Printf("Active agent: %s\n", activeAgent)
+			fmt.Printf("%s %s\n", green("Active agent:"), cyan(activeAgent))
 			continue
 		case "clear":
 			activeAgent = ""
-			fmt.Println("Active agent cleared")
+			fmt.Println(dim("Active agent cleared"))
 			continue
 		case "current":
 			if activeAgent == "" {
-				fmt.Println("No active agent")
+				fmt.Println(yellow("No active agent"))
 			} else {
-				fmt.Printf("Active agent: %s\n", activeAgent)
+				fmt.Printf("%s %s\n", green("Active agent:"), cyan(activeAgent))
 			}
 			continue
 		}
 
 		resolved, err := resolveShellCommand(fields, activeAgent)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, red(err.Error()))
 			continue
 		}
 
@@ -225,7 +239,7 @@ func runShell(client *core.Client) int {
 			fmt.Sprintf("-port=%d", client.ServerPort),
 		}, resolved...))
 		if code != 0 {
-			fmt.Printf("command failed with exit code %d\n", code)
+			fmt.Printf("%s %d\n", red("command failed with exit code"), code)
 		}
 	}
 }
@@ -236,7 +250,7 @@ func resolveShellCommand(fields []string, activeAgent string) ([]string, error) 
 	}
 
 	switch fields[0] {
-	case "list", "help", "exit", "quit", "shell", "start":
+	case "list", "help", "exit", "quit", "shell", "start", "plugin":
 		return fields, nil
 	case "info", "ping":
 		if len(fields) == 1 {
@@ -278,9 +292,9 @@ func resolveShellCommand(fields []string, activeAgent string) ([]string, error) 
 
 func shellPrompt(activeAgent string) string {
 	if activeAgent == "" {
-		return "trish"
+		return cyan("trish")
 	}
-	return "trish[" + activeAgent + "]"
+	return cyan("trish") + "[" + green(activeAgent) + "]"
 }
 
 func parseCommonFlags(args []string) (string, int, []string, error) {
@@ -320,16 +334,17 @@ func parseCommonFlags(args []string) (string, int, []string, error) {
 }
 
 func printHelp() {
-	fmt.Println("Trish - Remote PC Management")
+	printBanner()
 	fmt.Println()
-	fmt.Println("Usage:")
-	fmt.Println("  trish [-server=HOST] [-port=9999] list")
-	fmt.Println("  trish [-server=HOST] [-port=9999] info <agent-id>")
-	fmt.Println("  trish [-server=HOST] [-port=9999] ping <agent-id>")
-	fmt.Println("  trish [-server=HOST] [-port=9999] exec <agent-id> <command> [args...]")
-	fmt.Println("  trish [-server=HOST] [-port=9999] agent <freeze|unfreeze|stop|restart> <agent-id>")
-	fmt.Println("  trish [-server=HOST] [-port=9999] shell")
-	fmt.Println("  trish [-server=HOST] [-port=9999] start gui")
+	fmt.Println(bold("Usage"))
+	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] list")
+	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] info <agent-id>")
+	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] ping <agent-id>")
+	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] exec <agent-id> <command> [args...]")
+	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] agent <freeze|unfreeze|stop|restart> <agent-id>")
+	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] plugin <install|update|list|status|remove> ...")
+	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] shell")
+	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] start gui")
 }
 
 func defaultStatus(status string) string {

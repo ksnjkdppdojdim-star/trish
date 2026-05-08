@@ -1,0 +1,14 @@
+{
+  "name": "helloWorld",
+  "version": "1.0.0",
+  "description": "Example Trish dynamic plugin for developers.",
+  "entry": "helloWorld.ps1",
+  "shell": "powershell",
+  "os": ["windows"],
+  "commands": [
+    {
+      "name": "hello",
+      "description": "Print a hello message from a dynamic plugin."
+    }
+  ]
+}

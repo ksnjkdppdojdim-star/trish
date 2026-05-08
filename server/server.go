@@ -4,6 +4,8 @@ import (
 	"crypto/hmac"
 	"fmt"
 	"net"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +20,7 @@ type Server struct {
 	authMu      sync.Mutex
 	seenNonces  map[string]time.Time
 	registry    *core.AgentRegistry
+	plugins     *pluginStore
 	sessions    *sessionManager
 	listener    net.Listener
 	quit        chan struct{}
@@ -29,12 +32,17 @@ func NewServer(port int, registryPath string, adminSecret string) (*Server, erro
 	if err != nil {
 		return nil, err
 	}
+	plugins, err := newPluginStore(defaultPluginStorePath(registryPath))
+	if err != nil {
+		return nil, err
+	}
 
 	return &Server{
 		port:        port,
 		adminSecret: strings.TrimSpace(adminSecret),
 		seenNonces:  make(map[string]time.Time),
 		registry:    registry,
+		plugins:     plugins,
 		sessions:    newSessionManager(),
 		quit:        make(chan struct{}),
 	}, nil
@@ -104,7 +112,7 @@ func (s *Server) handleCLIMessage(session *agentSession, msg *core.Message) {
 		entries := s.registry.List()
 		agents := make([]core.AgentRegistryEntry, 0, len(entries))
 		for _, entry := range entries {
-			agents = append(agents, *cloneEntry(entry))
+			agents = append(agents, *s.cloneEntryWithPlugins(entry))
 		}
 		_ = session.send(&core.Message{Type: core.MessageTypeServerListResult, Agents: agents, Success: true})
 	case core.MessageTypeCLIInfo:
@@ -115,21 +123,31 @@ func (s *Server) handleCLIMessage(session *agentSession, msg *core.Message) {
 		}
 		_ = session.send(&core.Message{
 			Type:     core.MessageTypeServerInfoResult,
-			Agent:    cloneEntry(entry),
-			Commands: append([]string(nil), entry.Commands...),
+			Agent:    s.cloneEntryWithPlugins(entry),
+			Commands: mergeCommands(entry.Commands, s.plugins.commandNames()),
 			Success:  true,
 		})
 	case core.MessageTypeCLIExec:
-		resp, err := s.sessions.dispatch(msg.AgentID, &core.Message{
-			Type:         core.MessageTypeServerExec,
-			RequestID:    core.NewRequestID("dispatch"),
-			CommandID:    core.NewRequestID("cmd"),
-			AgentID:      msg.AgentID,
-			Command:      msg.Command,
-			Args:         append([]string(nil), msg.Args...),
-			TrustedAdmin: true,
-			Timestamp:    time.Now().UTC(),
-		}, 30*time.Second)
+		dispatch := &core.Message{
+			Type:      core.MessageTypeServerExec,
+			RequestID: core.NewRequestID("dispatch"),
+			CommandID: core.NewRequestID("cmd"),
+			AgentID:   msg.AgentID,
+			Command:   msg.Command,
+			Args:      append([]string(nil), msg.Args...),
+			Timestamp: time.Now().UTC(),
+		}
+		if pkg, ok := s.plugins.findCommand(msg.Command); ok {
+			script, err := buildPluginPowerShell(pkg, msg.Args)
+			if err != nil {
+				_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
+				return
+			}
+			dispatch.Command = "superexec"
+			dispatch.Args = []string{"powershell", script}
+			dispatch.TrustedAdmin = true
+		}
+		resp, err := s.sessions.dispatch(msg.AgentID, dispatch, 30*time.Second)
 		if err != nil {
 			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
 			return
@@ -141,6 +159,32 @@ func (s *Server) handleCLIMessage(session *agentSession, msg *core.Message) {
 			Result:    resp.Result,
 			Error:     resp.Error,
 			Success:   resp.Success,
+		})
+	case core.MessageTypeCLIPluginList:
+		_ = session.send(&core.Message{
+			Type:    core.MessageTypeServerPluginList,
+			Plugins: s.plugins.list(),
+			Success: true,
+		})
+	case core.MessageTypeCLIPluginInstall:
+		if err := s.plugins.install(msg.Plugin); err != nil {
+			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
+			return
+		}
+		_ = session.send(&core.Message{
+			Type:    core.MessageTypeServerExecResult,
+			Result:  fmt.Sprintf("plugin %s %s installed", msg.Plugin.Manifest.Name, msg.Plugin.Manifest.Version),
+			Success: true,
+		})
+	case core.MessageTypeCLIPluginRemove:
+		if err := s.plugins.remove(msg.PluginName); err != nil {
+			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
+			return
+		}
+		_ = session.send(&core.Message{
+			Type:    core.MessageTypeServerExecResult,
+			Result:  fmt.Sprintf("plugin %s removed", msg.PluginName),
+			Success: true,
 		})
 	case core.MessageTypeCLIPing:
 		if msg.AgentID == "" {
@@ -377,4 +421,36 @@ func cloneEntry(entry *core.AgentRegistryEntry) *core.AgentRegistryEntry {
 	cloned := *entry
 	cloned.Commands = append([]string(nil), entry.Commands...)
 	return &cloned
+}
+
+func (s *Server) cloneEntryWithPlugins(entry *core.AgentRegistryEntry) *core.AgentRegistryEntry {
+	cloned := cloneEntry(entry)
+	if cloned == nil {
+		return nil
+	}
+	cloned.Commands = mergeCommands(cloned.Commands, s.plugins.commandNames())
+	return cloned
+}
+
+func mergeCommands(base []string, extra []string) []string {
+	seen := make(map[string]bool)
+	commands := make([]string, 0, len(base)+len(extra))
+	for _, command := range append(append([]string(nil), base...), extra...) {
+		command = strings.TrimSpace(command)
+		if command == "" || seen[command] {
+			continue
+		}
+		seen[command] = true
+		commands = append(commands, command)
+	}
+	sort.Strings(commands)
+	return commands
+}
+
+func defaultPluginStorePath(registryPath string) string {
+	dir := filepath.Dir(registryPath)
+	if dir == "." || dir == "" {
+		return "plugins.json"
+	}
+	return filepath.Join(dir, "plugins.json")
 }

@@ -10,10 +10,10 @@ import (
 
 // Client represente le client admin qui parle au serveur central.
 type Client struct {
-	ID         string
-	ServerAddr string
-	ServerPort int
-	Timeout    time.Duration
+	ID          string
+	ServerAddr  string
+	ServerPort  int
+	Timeout     time.Duration
 	AdminSecret string
 }
 
@@ -27,10 +27,10 @@ func NewClient(serverAddr string, serverPort int) *Client {
 	}
 
 	return &Client{
-		ID:         fmt.Sprintf("client-%d", time.Now().UnixNano()),
-		ServerAddr: serverAddr,
-		ServerPort: serverPort,
-		Timeout:    5 * time.Second,
+		ID:          fmt.Sprintf("client-%d", time.Now().UnixNano()),
+		ServerAddr:  serverAddr,
+		ServerPort:  serverPort,
+		Timeout:     5 * time.Second,
 		AdminSecret: buildcfg.DefaultAdminSecret,
 	}
 }
@@ -141,6 +141,36 @@ func (c *Client) ControlAgent(agentID, control string) (string, error) {
 		Type:    MessageTypeCLIAgentControl,
 		AgentID: agentID,
 		Control: control,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Result, nil
+}
+
+func (c *Client) ListPlugins() ([]DynamicPluginManifest, error) {
+	resp, err := c.do(&Message{Type: MessageTypeCLIPluginList})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Plugins, nil
+}
+
+func (c *Client) InstallPlugin(pkg *DynamicPluginPackage) (string, error) {
+	resp, err := c.do(&Message{
+		Type:   MessageTypeCLIPluginInstall,
+		Plugin: pkg,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Result, nil
+}
+
+func (c *Client) RemovePlugin(name string) (string, error) {
+	resp, err := c.do(&Message{
+		Type:       MessageTypeCLIPluginRemove,
+		PluginName: name,
 	})
 	if err != nil {
 		return "", err
