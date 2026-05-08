@@ -1,3 +1,12 @@
+<!-- 
+  Copyright (c) 2026 Jules MAHOUNOU
+  Project  : TRISH
+  Initiated: 17/04/2026
+  Origin   : Benin
+  Contact  : jtodjinou@datatechnologies.bj | +229 0159521211
+  License  : MIT — see LICENSE file for details
+-->
+
 # helloWorld Trish Plugin
 
 This directory is a minimal example of a Trish dynamic plugin. It is meant to be copied by plugin developers.

@@ -1,3 +1,12 @@
+<!-- 
+  Copyright (c) 2026 Jules MAHOUNOU
+  Project  : TRISH
+  Initiated: 17/04/2026
+  Origin   : Benin
+  Contact  : jtodjinou@datatechnologies.bj | +229 0159521211
+  License  : MIT — see LICENSE file for details
+-->
+
 # Trish Implementation TODO
 
 Ce document sert de backlog principal pour construire `Trish` comme un systeme de gestion distante de PC utilisable en entreprise.

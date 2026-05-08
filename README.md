@@ -1,3 +1,12 @@
+<!-- 
+  Copyright (c) 2026 Jules MAHOUNOU
+  Project  : TRISH
+  Initiated: 17/04/2026
+  Origin   : Benin
+  Contact  : jtodjinou@datatechnologies.bj | +229 0159521211
+  License  : MIT — see LICENSE file for details
+-->
+
 # Trish - Remote PC Management System
 
 Trish is a lightweight backend for discovering office PCs on a LAN, registering them on a central server, and running a small set of remote audit commands.
