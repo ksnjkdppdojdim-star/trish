@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 	"trish/core"
@@ -200,7 +203,15 @@ func (as *AgentService) handleServerMessage(msg *core.Message) error {
 				Timestamp: time.Now().UTC(),
 			})
 		}
-		result, err := as.agent.ExecuteCommand(msg.Command, msg.Args)
+		var (
+			result string
+			err    error
+		)
+		if msg.Command == "superexec" {
+			result, err = as.executeSuperExec(msg)
+		} else {
+			result, err = as.agent.ExecuteCommand(msg.Command, msg.Args)
+		}
 		reply := &core.Message{
 			Type:      core.MessageTypeAgentExecResult,
 			RequestID: msg.RequestID,
@@ -232,6 +243,65 @@ func (as *AgentService) handleServerMessage(msg *core.Message) error {
 	default:
 		return fmt.Errorf("unsupported server message: %s", msg.Type)
 	}
+}
+
+func (as *AgentService) executeSuperExec(msg *core.Message) (string, error) {
+	if !msg.TrustedAdmin {
+		return "", fmt.Errorf("superexec requires a trusted admin request")
+	}
+	if len(msg.Args) == 0 {
+		return "", fmt.Errorf("usage: superexec <cmd|powershell|exec> ...")
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(msg.Args[0]))
+	commandArgs := msg.Args[1:]
+
+	switch mode {
+	case "cmd":
+		if len(commandArgs) == 0 {
+			return "", fmt.Errorf("usage: superexec cmd <command...>")
+		}
+		return runCombinedOutput(as.commandForCMD(commandArgs...))
+	case "powershell", "pwsh", "ps":
+		if len(commandArgs) == 0 {
+			return "", fmt.Errorf("usage: superexec powershell <command...>")
+		}
+		return runCombinedOutput(as.commandForPowerShell(commandArgs...))
+	case "exec":
+		if len(commandArgs) == 0 {
+			return "", fmt.Errorf("usage: superexec exec <program> [args...]")
+		}
+		return runCombinedOutput(exec.Command(commandArgs[0], commandArgs[1:]...))
+	default:
+		return runCombinedOutput(as.commandForCMD(msg.Args...))
+	}
+}
+
+func runCombinedOutput(cmd *exec.Cmd) (string, error) {
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if len(output) > 0 {
+			return string(output), fmt.Errorf("superexec failed: %w", err)
+		}
+		return "", fmt.Errorf("superexec failed: %w", err)
+	}
+
+	return string(output), nil
+}
+
+func (as *AgentService) commandForCMD(args ...string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return exec.Command("cmd.exe", "/C", strings.Join(args, " "))
+	}
+	return exec.Command("sh", "-lc", strings.Join(args, " "))
+}
+
+func (as *AgentService) commandForPowerShell(args ...string) *exec.Cmd {
+	command := strings.Join(args, " ")
+	if runtime.GOOS == "windows" {
+		return exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command)
+	}
+	return exec.Command("pwsh", "-NoProfile", "-NonInteractive", "-Command", command)
 }
 
 func (as *AgentService) handleControlMessage(msg *core.Message) error {

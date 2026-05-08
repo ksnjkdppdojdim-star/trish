@@ -7,5 +7,6 @@ var (
 	DefaultAgentListenPort = "2222"
 	DefaultServerRegistry  = ""
 	DefaultServerLock      = ""
+	DefaultAdminSecret     = ""
 	AllowLoopbackServer    = "false"
 )

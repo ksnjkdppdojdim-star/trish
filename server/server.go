@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/hmac"
 	"fmt"
 	"net"
 	"strings"
@@ -11,26 +12,31 @@ import (
 
 // Server represente le serveur Trish central.
 type Server struct {
-	mu       sync.RWMutex
-	port     int
-	registry *core.AgentRegistry
-	sessions *sessionManager
-	listener net.Listener
-	quit     chan struct{}
+	mu          sync.RWMutex
+	port        int
+	adminSecret string
+	authMu      sync.Mutex
+	seenNonces  map[string]time.Time
+	registry    *core.AgentRegistry
+	sessions    *sessionManager
+	listener    net.Listener
+	quit        chan struct{}
 }
 
 // NewServer cree un nouveau serveur.
-func NewServer(port int, registryPath string) (*Server, error) {
+func NewServer(port int, registryPath string, adminSecret string) (*Server, error) {
 	registry, err := core.NewAgentRegistry(registryPath)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Server{
-		port:     port,
-		registry: registry,
-		sessions: newSessionManager(),
-		quit:     make(chan struct{}),
+		port:        port,
+		adminSecret: strings.TrimSpace(adminSecret),
+		seenNonces:  make(map[string]time.Time),
+		registry:    registry,
+		sessions:    newSessionManager(),
+		quit:        make(chan struct{}),
 	}, nil
 }
 
@@ -88,6 +94,11 @@ func (s *Server) handleConnection(conn net.Conn) {
 }
 
 func (s *Server) handleCLIMessage(session *agentSession, msg *core.Message) {
+	if err := s.verifyCLIMessage(msg); err != nil {
+		_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error(), Success: false})
+		return
+	}
+
 	switch msg.Type {
 	case core.MessageTypeCLIList:
 		entries := s.registry.List()
@@ -110,13 +121,14 @@ func (s *Server) handleCLIMessage(session *agentSession, msg *core.Message) {
 		})
 	case core.MessageTypeCLIExec:
 		resp, err := s.sessions.dispatch(msg.AgentID, &core.Message{
-			Type:      core.MessageTypeServerExec,
-			RequestID: core.NewRequestID("dispatch"),
-			CommandID: core.NewRequestID("cmd"),
-			AgentID:   msg.AgentID,
-			Command:   msg.Command,
-			Args:      append([]string(nil), msg.Args...),
-			Timestamp: time.Now().UTC(),
+			Type:         core.MessageTypeServerExec,
+			RequestID:    core.NewRequestID("dispatch"),
+			CommandID:    core.NewRequestID("cmd"),
+			AgentID:      msg.AgentID,
+			Command:      msg.Command,
+			Args:         append([]string(nil), msg.Args...),
+			TrustedAdmin: true,
+			Timestamp:    time.Now().UTC(),
 		}, 30*time.Second)
 		if err != nil {
 			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
@@ -186,6 +198,56 @@ func (s *Server) handleCLIMessage(session *agentSession, msg *core.Message) {
 	default:
 		_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: fmt.Sprintf("unsupported cli message: %s", msg.Type)})
 	}
+}
+
+func (s *Server) verifyCLIMessage(msg *core.Message) error {
+	if strings.TrimSpace(s.adminSecret) == "" {
+		return fmt.Errorf("server admin secret is not configured")
+	}
+	if strings.TrimSpace(msg.AuthClientID) == "" {
+		return fmt.Errorf("missing auth client id")
+	}
+	if strings.TrimSpace(msg.AuthNonce) == "" {
+		return fmt.Errorf("missing auth nonce")
+	}
+	if strings.TrimSpace(msg.AuthSignature) == "" {
+		return fmt.Errorf("missing auth signature")
+	}
+	now := time.Now().UTC()
+	msgTime := time.Unix(msg.AuthTimestamp, 0).UTC()
+	if msg.AuthTimestamp == 0 || now.Sub(msgTime) > core.DefaultAuthMaxSkew || msgTime.Sub(now) > core.DefaultAuthMaxSkew {
+		return fmt.Errorf("stale or invalid auth timestamp")
+	}
+
+	expected, err := core.ComputeMessageSignature(msg, s.adminSecret)
+	if err != nil {
+		return err
+	}
+	if !hmac.Equal([]byte(expected), []byte(msg.AuthSignature)) {
+		return fmt.Errorf("invalid auth signature")
+	}
+	if !s.registerNonce(msg.AuthNonce, msgTime) {
+		return fmt.Errorf("replayed auth nonce")
+	}
+	return nil
+}
+
+func (s *Server) registerNonce(nonce string, msgTime time.Time) bool {
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+
+	cutoff := time.Now().UTC().Add(-2 * core.DefaultAuthMaxSkew)
+	for key, seenAt := range s.seenNonces {
+		if seenAt.Before(cutoff) {
+			delete(s.seenNonces, key)
+		}
+	}
+
+	if _, exists := s.seenNonces[nonce]; exists {
+		return false
+	}
+	s.seenNonces[nonce] = msgTime
+	return true
 }
 
 func (s *Server) handleAgentSession(session *agentSession, msg *core.Message) {

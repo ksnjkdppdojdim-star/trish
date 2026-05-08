@@ -14,7 +14,7 @@ Implemented:
 
 Not implemented yet:
 
-- Authentication / encryption
+- Agent/server authentication
 - Multi-user access control
 - Rich audit history
 - Auto-discovery beyond explicit agent registration
@@ -60,6 +60,7 @@ Variables supportees:
 - `TRISH_AGENT_LISTEN_PORT`: port annonce par l'agent
 - `TRISH_SERVER_REGISTRY_PATH`: chemin du registre serveur
 - `TRISH_SERVER_LOCK_PATH`: chemin du lock serveur
+- `TRISH_ADMIN_SECRET`: secret partage pour signer les requetes `trish-cli -> trish-server`
 - `TRISH_ALLOW_LOOPBACK_SERVER`: autorise `127.0.0.1` pour un install agent local de test
 
 ## Run Locally
@@ -68,6 +69,30 @@ Start the server:
 
 ```bash
 ./trish-server
+```
+
+Installer le serveur comme service Windows qui demarre avec le PC:
+
+```bash
+trish-server.exe install
+```
+
+Verifier sans rien modifier:
+
+```bash
+trish-server.exe install-check
+```
+
+Reparer ou mettre a jour le service existant:
+
+```bash
+trish-server.exe repair
+```
+
+Desinstaller le service:
+
+```bash
+trish-server.exe uninstall
 ```
 
 Start an agent:
@@ -104,6 +129,9 @@ Use the CLI:
 ./trish exec <agent-id> ipconfig
 ./trish exec <agent-id> dir .
 ./trish exec <agent-id> cd ..
+./trish exec <agent-id> superexec cmd dir C:\Users
+./trish exec <agent-id> superexec powershell Get-Process
+./trish exec <agent-id> superexec exec whoami.exe
 ./trish shell
 ```
 
@@ -125,5 +153,8 @@ docker run --rm trish:latest -server=<server-host> -port=9999 exec <agent-id> ip
 ## Notes
 
 - `cd` changes the working directory inside the running agent session.
+- Les requetes admin `cli -> server` sont signees avec le secret partage embarque au build.
+- `superexec` accepte les modes `cmd`, `powershell` et `exec`.
 - The registry file is stored by default in `~/.trish/registry.json`.
 - For LAN usage, launch one `trish-agent` per managed machine.
+- Sous Windows, `trish-server.exe install` copie le binaire dans `C:\ProgramData\Trish\server`, cree un service `TrishServer`, et le configure en demarrage automatique.

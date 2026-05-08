@@ -3,7 +3,9 @@ package core
 import (
 	"fmt"
 	"net"
+	"strings"
 	"time"
+	"trish/buildcfg"
 )
 
 // Client represente le client admin qui parle au serveur central.
@@ -12,6 +14,7 @@ type Client struct {
 	ServerAddr string
 	ServerPort int
 	Timeout    time.Duration
+	AdminSecret string
 }
 
 // NewClient cree un client connecte au serveur Trish.
@@ -28,6 +31,7 @@ func NewClient(serverAddr string, serverPort int) *Client {
 		ServerAddr: serverAddr,
 		ServerPort: serverPort,
 		Timeout:    5 * time.Second,
+		AdminSecret: buildcfg.DefaultAdminSecret,
 	}
 }
 
@@ -49,6 +53,9 @@ func (c *Client) do(msg *Message) (*Message, error) {
 	if msg.RequestID == "" {
 		msg.RequestID = NewRequestID("cli")
 	}
+	if err := c.signMessage(msg); err != nil {
+		return nil, err
+	}
 
 	if err := encoder.Encode(msg); err != nil {
 		return nil, err
@@ -64,6 +71,21 @@ func (c *Client) do(msg *Message) (*Message, error) {
 	}
 
 	return &resp, nil
+}
+
+func (c *Client) signMessage(msg *Message) error {
+	if strings.TrimSpace(c.AdminSecret) == "" {
+		return fmt.Errorf("admin secret is not configured")
+	}
+	nonce, err := NewAuthNonce()
+	if err != nil {
+		return err
+	}
+
+	msg.AuthClientID = c.ID
+	msg.AuthTimestamp = time.Now().UTC().Unix()
+	msg.AuthNonce = nonce
+	return SignMessage(msg, c.AdminSecret)
 }
 
 // ListAgents retourne la liste des agents connus du serveur.

@@ -47,6 +47,13 @@ Encore insuffisant pour la production :
 - pas de vrai audit
 - pas de gestion stricte du serveur unique
 
+## Priorite Actuelle
+
+Les deux chantiers a traiter maintenant avant le prochain redeploiement agent sont :
+
+- [x] Renforcer l'authentification `trish-cli -> trish-server` avec signature, timestamp et nonce
+- [x] Etendre `superexec` pour executer `cmd`, `powershell` et des executables directs sur le poste distant
+
 ## Priorites
 
 ### P0 - Fondations indispensables
@@ -64,7 +71,7 @@ Encore insuffisant pour la production :
 ### P1 - Securite et robustesse
 
 - [ ] Ajouter authentification agent <-> serveur
-- [ ] Ajouter authentification admin CLI <-> serveur
+- [x] Ajouter authentification admin CLI <-> serveur
 - [ ] Ajouter TLS
 - [ ] Gerer les reconnexions proprement
 - [ ] Ajouter timeouts, retries et erreurs standardisees
@@ -181,7 +188,9 @@ Livrables :
 ## Phase 4 - Securite Reseau
 
 - [ ] Ajouter l'authentification des agents
-- [ ] Ajouter l'authentification des admins
+- [x] Ajouter l'authentification des admins
+- [x] Signer les requetes admin `cli -> server` avec HMAC
+- [x] Ajouter timestamp et nonce anti-replay pour les requetes admin
 - [ ] Ajouter TLS
 - [ ] Definir une strategie de certificats ou tokens
 - [ ] Proteger l'enrolement initial des agents
@@ -200,6 +209,7 @@ Livrables :
 
 - [ ] Definir une whitelist de commandes V1
 - [ ] Normaliser les plugins
+- [x] Etendre `superexec` avec modes `cmd`, `powershell`, `exec`
 - [ ] Ajouter validation stricte des arguments
 - [ ] Ajouter timeout par commande
 - [ ] Ajouter taille max de sortie

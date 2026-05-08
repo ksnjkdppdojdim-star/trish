@@ -54,6 +54,12 @@ func Run(args []string) int {
 		return runAgentControl(client, remaining[1], remaining[2])
 	case "shell":
 		return runShell(client)
+	case "start":
+		if len(remaining) >= 2 && remaining[1] == "gui" {
+			return runGUI(client, remaining[2:])
+		}
+		fmt.Fprintln(os.Stderr, "usage: trish start gui")
+		return 1
 	case "help", "-h", "--help":
 		printHelp()
 		return 0
@@ -157,11 +163,12 @@ func runAgentControl(client *core.Client, control string, agentID string) int {
 
 func runShell(client *core.Client) int {
 	fmt.Println("Trish shell")
-	fmt.Println("Commands: list, info <agent>, exec <agent> <cmd> [args], help, exit")
+	fmt.Println("Commands: list, use <agent>, clear, current, info [agent], ping [agent], exec [agent] <cmd> [args], agent <freeze|unfreeze|stop|restart> [agent], start gui, help, exit")
 
 	scanner := bufio.NewScanner(os.Stdin)
+	activeAgent := ""
 	for {
-		fmt.Print("trish> ")
+		fmt.Printf("%s> ", shellPrompt(activeAgent))
 		if !scanner.Scan() {
 			return 0
 		}
@@ -176,18 +183,104 @@ func runShell(client *core.Client) int {
 		}
 
 		if line == "help" {
-			fmt.Println("list | info <agent> | ping <agent> | exec <agent> <cmd> [args] | agent <freeze|unfreeze|stop|restart> <agent> | exit")
+			fmt.Println("list | use <agent> | clear | current | info [agent] | ping [agent] | exec [agent] <cmd> [args] | agent <freeze|unfreeze|stop|restart> [agent] | start gui | exit")
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+
+		switch fields[0] {
+		case "use", "select", "switch":
+			if len(fields) != 2 {
+				fmt.Println("usage: use <agent-id>")
+				continue
+			}
+			activeAgent = fields[1]
+			fmt.Printf("Active agent: %s\n", activeAgent)
+			continue
+		case "clear":
+			activeAgent = ""
+			fmt.Println("Active agent cleared")
+			continue
+		case "current":
+			if activeAgent == "" {
+				fmt.Println("No active agent")
+			} else {
+				fmt.Printf("Active agent: %s\n", activeAgent)
+			}
+			continue
+		}
+
+		resolved, err := resolveShellCommand(fields, activeAgent)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			continue
 		}
 
 		code := Run(append([]string{
 			fmt.Sprintf("-server=%s", client.ServerAddr),
 			fmt.Sprintf("-port=%d", client.ServerPort),
-		}, strings.Fields(line)...))
+		}, resolved...))
 		if code != 0 {
 			fmt.Printf("command failed with exit code %d\n", code)
 		}
 	}
+}
+
+func resolveShellCommand(fields []string, activeAgent string) ([]string, error) {
+	if len(fields) == 0 {
+		return nil, nil
+	}
+
+	switch fields[0] {
+	case "list", "help", "exit", "quit", "shell", "start":
+		return fields, nil
+	case "info", "ping":
+		if len(fields) == 1 {
+			if activeAgent == "" {
+				return nil, fmt.Errorf("no active agent selected")
+			}
+			return []string{fields[0], activeAgent}, nil
+		}
+		return fields, nil
+	case "exec", "cmd":
+		if activeAgent != "" {
+			if len(fields) < 2 {
+				return nil, fmt.Errorf("usage: exec <command> [args...]")
+			}
+			if len(fields) >= 3 && strings.EqualFold(fields[1], activeAgent) {
+				return fields, nil
+			}
+			return append([]string{"exec", activeAgent}, fields[1:]...), nil
+		}
+		if len(fields) >= 3 {
+			return fields, nil
+		}
+		return nil, fmt.Errorf("usage: exec <agent-id> <command> [args...]")
+	case "agent":
+		if len(fields) >= 3 {
+			return fields, nil
+		}
+		if activeAgent == "" || len(fields) != 2 {
+			return nil, fmt.Errorf("usage: agent <freeze|unfreeze|stop|restart> <agent-id>")
+		}
+		return []string{"agent", fields[1], activeAgent}, nil
+	default:
+		if activeAgent == "" {
+			return nil, fmt.Errorf("unknown command %q and no active agent selected", fields[0])
+		}
+		return append([]string{"exec", activeAgent}, fields...), nil
+	}
+}
+
+func shellPrompt(activeAgent string) string {
+	if activeAgent == "" {
+		return "trish"
+	}
+	return "trish[" + activeAgent + "]"
 }
 
 func parseCommonFlags(args []string) (string, int, []string, error) {
@@ -214,6 +307,10 @@ func parseCommonFlags(args []string) (string, int, []string, error) {
 			if err != nil {
 				return "", 0, nil, fmt.Errorf("invalid port flag: %s", arg)
 			}
+		case strings.HasPrefix(arg, "-admin-secret="):
+			buildcfg.DefaultAdminSecret = strings.TrimPrefix(arg, "-admin-secret=")
+		case strings.HasPrefix(arg, "--admin-secret="):
+			buildcfg.DefaultAdminSecret = strings.TrimPrefix(arg, "--admin-secret=")
 		default:
 			remaining = append(remaining, arg)
 		}
@@ -232,6 +329,7 @@ func printHelp() {
 	fmt.Println("  trish [-server=HOST] [-port=9999] exec <agent-id> <command> [args...]")
 	fmt.Println("  trish [-server=HOST] [-port=9999] agent <freeze|unfreeze|stop|restart> <agent-id>")
 	fmt.Println("  trish [-server=HOST] [-port=9999] shell")
+	fmt.Println("  trish [-server=HOST] [-port=9999] start gui")
 }
 
 func defaultStatus(status string) string {
