@@ -1,0 +1,102 @@
+# Copyright (c) 2026 Jules MAHOUNOU
+# Project  : TRISH
+# Initiated: 17/04/2026
+# Origin   : Benin
+# Contact  : jtodjinou@datatechnologies.bj | +229 0159521211
+# License  : MIT — see LICENSE file for details
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            suffix: .exe
+          - goos: linux
+            goarch: amd64
+            suffix: ""
+          - goos: linux
+            goarch: arm64
+            suffix: ""
+          - goos: darwin
+            goarch: amd64
+            suffix: ""
+          - goos: darwin
+            goarch: arm64
+            suffix: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build binaries
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          SUFFIX="${{ matrix.suffix }}"
+          TAG="${{ github.ref_name }}"
+          PLATFORM="${{ matrix.goos }}_${{ matrix.goarch }}"
+
+          go build -ldflags="-s -w -X main.version=${TAG}" \
+            -o dist/trish-server-${PLATFORM}${SUFFIX} ./cmd/server
+
+          go build -ldflags="-s -w -X main.version=${TAG}" \
+            -o dist/trish-cli-${PLATFORM}${SUFFIX} ./cmd/cli
+
+          go build -ldflags="-s -w -X main.version=${TAG}" \
+            -o dist/trish-agent-${PLATFORM}${SUFFIX} ./cmd/agent
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+
+  publish:
+    name: Publish GitHub Release
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binaries-*
+          path: dist/
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "TRISH ${{ github.ref_name }}"
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: dist/**
+          generate_release_notes: true

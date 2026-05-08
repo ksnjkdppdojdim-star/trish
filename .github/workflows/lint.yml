@@ -1,0 +1,35 @@
+# Copyright (c) 2026 Jules MAHOUNOU
+# Project  : TRISH
+# Initiated: 17/04/2026
+# Origin   : Benin
+# Contact  : jtodjinou@datatechnologies.bj | +229 0159521211
+# License  : MIT — see LICENSE file for details
+
+name: Lint
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["v*"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
