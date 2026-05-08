@@ -21,6 +21,7 @@ type Server struct {
 	seenNonces  map[string]time.Time
 	registry    *core.AgentRegistry
 	plugins     *pluginStore
+	groups      *groupStore
 	sessions    *sessionManager
 	listener    net.Listener
 	quit        chan struct{}
@@ -36,6 +37,10 @@ func NewServer(port int, registryPath string, adminSecret string) (*Server, erro
 	if err != nil {
 		return nil, err
 	}
+	groups, err := newGroupStore(defaultGroupStorePath(registryPath))
+	if err != nil {
+		return nil, err
+	}
 
 	return &Server{
 		port:        port,
@@ -43,6 +48,7 @@ func NewServer(port int, registryPath string, adminSecret string) (*Server, erro
 		seenNonces:  make(map[string]time.Time),
 		registry:    registry,
 		plugins:     plugins,
+		groups:      groups,
 		sessions:    newSessionManager(),
 		quit:        make(chan struct{}),
 	}, nil
@@ -176,6 +182,47 @@ func (s *Server) handleCLIMessage(session *agentSession, msg *core.Message) {
 			Result:  fmt.Sprintf("plugin %s %s installed", msg.Plugin.Manifest.Name, msg.Plugin.Manifest.Version),
 			Success: true,
 		})
+	case core.MessageTypeCLIPluginEnable:
+		if err := s.plugins.setEnabled(msg.PluginName, true); err != nil {
+			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
+			return
+		}
+		_ = session.send(&core.Message{
+			Type:    core.MessageTypeServerExecResult,
+			Result:  fmt.Sprintf("plugin %s enabled", msg.PluginName),
+			Success: true,
+		})
+	case core.MessageTypeCLIPluginDisable:
+		if err := s.plugins.setEnabled(msg.PluginName, false); err != nil {
+			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
+			return
+		}
+		_ = session.send(&core.Message{
+			Type:    core.MessageTypeServerExecResult,
+			Result:  fmt.Sprintf("plugin %s disabled", msg.PluginName),
+			Success: true,
+		})
+	case core.MessageTypeCLIPluginVersions:
+		versions, err := s.plugins.versions(msg.PluginName)
+		if err != nil {
+			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
+			return
+		}
+		_ = session.send(&core.Message{
+			Type:    core.MessageTypeServerPluginList,
+			Plugins: versions,
+			Success: true,
+		})
+	case core.MessageTypeCLIPluginRollback:
+		if err := s.plugins.rollback(msg.PluginName, msg.PluginVersion); err != nil {
+			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
+			return
+		}
+		_ = session.send(&core.Message{
+			Type:    core.MessageTypeServerExecResult,
+			Result:  fmt.Sprintf("plugin %s rolled back to %s", msg.PluginName, msg.PluginVersion),
+			Success: true,
+		})
 	case core.MessageTypeCLIPluginRemove:
 		if err := s.plugins.remove(msg.PluginName); err != nil {
 			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
@@ -186,6 +233,57 @@ func (s *Server) handleCLIMessage(session *agentSession, msg *core.Message) {
 			Result:  fmt.Sprintf("plugin %s removed", msg.PluginName),
 			Success: true,
 		})
+	case core.MessageTypeCLIGroupList:
+		_ = session.send(&core.Message{Type: core.MessageTypeServerListResult, Groups: s.groups.list(), Success: true})
+	case core.MessageTypeCLIGroupCreate:
+		if err := s.groups.create(msg.GroupName); err != nil {
+			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
+			return
+		}
+		_ = session.send(&core.Message{Type: core.MessageTypeServerExecResult, Result: fmt.Sprintf("group %s created", msg.GroupName), Success: true})
+	case core.MessageTypeCLIGroupDelete:
+		if err := s.groups.delete(msg.GroupName); err != nil {
+			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
+			return
+		}
+		for _, entry := range s.registry.List() {
+			_ = s.registry.RemoveGroup(entry.ID, msg.GroupName)
+		}
+		_ = session.send(&core.Message{Type: core.MessageTypeServerExecResult, Result: fmt.Sprintf("group %s deleted", msg.GroupName), Success: true})
+	case core.MessageTypeCLIGroupAdd:
+		if err := s.groups.create(msg.GroupName); err != nil {
+			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
+			return
+		}
+		if err := s.registry.AddGroup(msg.AgentID, msg.GroupName); err != nil {
+			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
+			return
+		}
+		_ = session.send(&core.Message{Type: core.MessageTypeServerExecResult, Result: fmt.Sprintf("agent %s added to group %s", msg.AgentID, msg.GroupName), Success: true})
+	case core.MessageTypeCLIGroupRemove:
+		if err := s.registry.RemoveGroup(msg.AgentID, msg.GroupName); err != nil {
+			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
+			return
+		}
+		_ = session.send(&core.Message{Type: core.MessageTypeServerExecResult, Result: fmt.Sprintf("agent %s removed from group %s", msg.AgentID, msg.GroupName), Success: true})
+	case core.MessageTypeCLITagSet:
+		if err := s.registry.SetTags(msg.AgentID, msg.Tags); err != nil {
+			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
+			return
+		}
+		_ = session.send(&core.Message{Type: core.MessageTypeServerExecResult, Result: fmt.Sprintf("tags updated for %s", msg.AgentID), Success: true})
+	case core.MessageTypeCLITagAdd:
+		if err := s.registry.AddTags(msg.AgentID, msg.Tags); err != nil {
+			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
+			return
+		}
+		_ = session.send(&core.Message{Type: core.MessageTypeServerExecResult, Result: fmt.Sprintf("tags added to %s", msg.AgentID), Success: true})
+	case core.MessageTypeCLITagRemove:
+		if err := s.registry.RemoveTags(msg.AgentID, msg.Tags); err != nil {
+			_ = session.send(&core.Message{Type: core.MessageTypeServerError, Error: err.Error()})
+			return
+		}
+		_ = session.send(&core.Message{Type: core.MessageTypeServerExecResult, Result: fmt.Sprintf("tags removed from %s", msg.AgentID), Success: true})
 	case core.MessageTypeCLIPing:
 		if msg.AgentID == "" {
 			_ = session.send(&core.Message{Type: core.MessageTypeServerPingResult, Result: "pong", Success: true})
@@ -420,6 +518,8 @@ func cloneEntry(entry *core.AgentRegistryEntry) *core.AgentRegistryEntry {
 
 	cloned := *entry
 	cloned.Commands = append([]string(nil), entry.Commands...)
+	cloned.Tags = append([]string(nil), entry.Tags...)
+	cloned.Groups = append([]string(nil), entry.Groups...)
 	return &cloned
 }
 
@@ -453,4 +553,12 @@ func defaultPluginStorePath(registryPath string) string {
 		return "plugins.json"
 	}
 	return filepath.Join(dir, "plugins.json")
+}
+
+func defaultGroupStorePath(registryPath string) string {
+	dir := filepath.Dir(registryPath)
+	if dir == "." || dir == "" {
+		return "groups.json"
+	}
+	return filepath.Join(dir, "groups.json")
 }

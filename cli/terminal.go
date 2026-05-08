@@ -39,6 +39,16 @@ func Run(args []string) int {
 			fmt.Fprintln(os.Stderr, "usage: trish exec <agent-id> <command> [args...]")
 			return 1
 		}
+		if remaining[1] == "--all" {
+			return runExecAll(client, remaining[2], remaining[3:])
+		}
+		if remaining[1] == "--group" {
+			if len(remaining) < 4 {
+				fmt.Fprintln(os.Stderr, "usage: trish exec --group <name> <command> [args...]")
+				return 1
+			}
+			return runExecGroup(client, remaining[2], remaining[3], remaining[4:])
+		}
 		return runExec(client, remaining[1], remaining[2], remaining[3:])
 	case "ping":
 		if len(remaining) < 2 {
@@ -54,6 +64,10 @@ func Run(args []string) int {
 		return runAgentControl(client, remaining[1], remaining[2])
 	case "plugin":
 		return runPlugin(client, remaining[1:])
+	case "group":
+		return runGroup(client, remaining[1:])
+	case "tag":
+		return runTag(client, remaining[1:])
 	case "shell":
 		return runShell(client)
 	case "start":
@@ -96,9 +110,11 @@ func runList(client *core.Client) int {
 			fmt.Sprintf("%s:%d", agent.IPAddress, agent.Port),
 			yesNo(agent.Connected),
 			statusLabel(agent.Status, agent.Connected),
+			strings.Join(agent.Tags, ", "),
+			strings.Join(agent.Groups, ", "),
 		})
 	}
-	printTable([]string{"Agent", "Hostname", "Address", "Connected", "Status"}, rows)
+	printTable([]string{"Agent", "Hostname", "Address", "Connected", "Status", "Tags", "Groups"}, rows)
 
 	return 0
 }
@@ -116,6 +132,8 @@ func runInfo(client *core.Client, agentID string) int {
 		{"Address", fmt.Sprintf("%s:%d", agent.IPAddress, agent.Port)},
 		{"Connected", yesNo(agent.Connected)},
 		{"Status", statusLabel(agent.Status, agent.Connected)},
+		{"Tags", strings.Join(agent.Tags, ", ")},
+		{"Groups", strings.Join(agent.Groups, ", ")},
 		{"Last Seen", agent.LastSeen.Format("2006-01-02 15:04:05")},
 	})
 
@@ -250,7 +268,7 @@ func resolveShellCommand(fields []string, activeAgent string) ([]string, error) 
 	}
 
 	switch fields[0] {
-	case "list", "help", "exit", "quit", "shell", "start", "plugin":
+	case "list", "help", "exit", "quit", "shell", "start", "plugin", "group", "tag":
 		return fields, nil
 	case "info", "ping":
 		if len(fields) == 1 {
@@ -264,6 +282,9 @@ func resolveShellCommand(fields []string, activeAgent string) ([]string, error) 
 		if activeAgent != "" {
 			if len(fields) < 2 {
 				return nil, fmt.Errorf("usage: exec <command> [args...]")
+			}
+			if strings.HasPrefix(fields[1], "--") {
+				return fields, nil
 			}
 			if len(fields) >= 3 && strings.EqualFold(fields[1], activeAgent) {
 				return fields, nil
@@ -341,8 +362,12 @@ func printHelp() {
 	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] info <agent-id>")
 	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] ping <agent-id>")
 	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] exec <agent-id> <command> [args...]")
+	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] exec --all <command> [args...]")
+	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] exec --group <name> <command> [args...]")
 	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] agent <freeze|unfreeze|stop|restart> <agent-id>")
-	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] plugin <install|update|list|status|remove> ...")
+	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] group <list|create|delete|add|remove-agent|exec> ...")
+	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] tag <agent-id> <list|set|add|remove> ...")
+	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] plugin <install|update|test|list|enable|disable|versions|rollback|status|remove> ...")
 	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] shell")
 	fmt.Println("  " + cyan("trish") + " [-server=HOST] [-port=9999] start gui")
 }

@@ -177,3 +177,112 @@ func (c *Client) RemovePlugin(name string) (string, error) {
 	}
 	return resp.Result, nil
 }
+
+func (c *Client) EnablePlugin(name string) (string, error) {
+	resp, err := c.do(&Message{
+		Type:       MessageTypeCLIPluginEnable,
+		PluginName: name,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Result, nil
+}
+
+func (c *Client) DisablePlugin(name string) (string, error) {
+	resp, err := c.do(&Message{
+		Type:       MessageTypeCLIPluginDisable,
+		PluginName: name,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Result, nil
+}
+
+func (c *Client) ListPluginVersions(name string) ([]DynamicPluginManifest, error) {
+	resp, err := c.do(&Message{
+		Type:       MessageTypeCLIPluginVersions,
+		PluginName: name,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Plugins, nil
+}
+
+func (c *Client) RollbackPlugin(name string, version string) (string, error) {
+	resp, err := c.do(&Message{
+		Type:          MessageTypeCLIPluginRollback,
+		PluginName:    name,
+		PluginVersion: version,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Result, nil
+}
+
+func (c *Client) ListGroups() ([]string, error) {
+	resp, err := c.do(&Message{Type: MessageTypeCLIGroupList})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Groups, nil
+}
+
+func (c *Client) CreateGroup(name string) (string, error) {
+	resp, err := c.do(&Message{Type: MessageTypeCLIGroupCreate, GroupName: name})
+	if err != nil {
+		return "", err
+	}
+	return resp.Result, nil
+}
+
+func (c *Client) DeleteGroup(name string) (string, error) {
+	resp, err := c.do(&Message{Type: MessageTypeCLIGroupDelete, GroupName: name})
+	if err != nil {
+		return "", err
+	}
+	return resp.Result, nil
+}
+
+func (c *Client) AddAgentToGroup(agentID string, group string) (string, error) {
+	resp, err := c.do(&Message{Type: MessageTypeCLIGroupAdd, AgentID: agentID, GroupName: group})
+	if err != nil {
+		return "", err
+	}
+	return resp.Result, nil
+}
+
+func (c *Client) RemoveAgentFromGroup(agentID string, group string) (string, error) {
+	resp, err := c.do(&Message{Type: MessageTypeCLIGroupRemove, AgentID: agentID, GroupName: group})
+	if err != nil {
+		return "", err
+	}
+	return resp.Result, nil
+}
+
+func (c *Client) SetAgentTags(agentID string, tags []string) (string, error) {
+	resp, err := c.do(&Message{Type: MessageTypeCLITagSet, AgentID: agentID, Tags: tags})
+	if err != nil {
+		return "", err
+	}
+	return resp.Result, nil
+}
+
+func (c *Client) AddAgentTags(agentID string, tags []string) (string, error) {
+	resp, err := c.do(&Message{Type: MessageTypeCLITagAdd, AgentID: agentID, Tags: tags})
+	if err != nil {
+		return "", err
+	}
+	return resp.Result, nil
+}
+
+func (c *Client) RemoveAgentTags(agentID string, tags []string) (string, error) {
+	resp, err := c.do(&Message{Type: MessageTypeCLITagRemove, AgentID: agentID, Tags: tags})
+	if err != nil {
+		return "", err
+	}
+	return resp.Result, nil
+}

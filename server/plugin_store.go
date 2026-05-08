@@ -13,15 +13,22 @@ import (
 )
 
 type pluginStore struct {
-	mu       sync.RWMutex
-	path     string
-	packages map[string]*core.DynamicPluginPackage
+	mu      sync.RWMutex
+	path    string
+	records map[string]*pluginRecord
+}
+
+type pluginRecord struct {
+	Name          string                      `json:"name"`
+	ActiveVersion string                      `json:"active_version"`
+	Disabled      bool                        `json:"disabled,omitempty"`
+	Versions      []core.DynamicPluginPackage `json:"versions"`
 }
 
 func newPluginStore(path string) (*pluginStore, error) {
 	store := &pluginStore{
-		path:     path,
-		packages: make(map[string]*core.DynamicPluginPackage),
+		path:    path,
+		records: make(map[string]*pluginRecord),
 	}
 	if dir := filepath.Dir(path); dir != "." && dir != "" {
 		if err := os.MkdirAll(dir, 0700); err != nil {
@@ -39,11 +46,25 @@ func (s *pluginStore) load() error {
 	if err != nil {
 		return err
 	}
+
+	var records []pluginRecord
+	if err := json.Unmarshal(data, &records); err == nil && len(records) > 0 && records[0].Name != "" {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		for i := range records {
+			record := records[i]
+			if err := normalizePluginRecord(&record); err != nil {
+				return err
+			}
+			s.records[record.Name] = &record
+		}
+		return nil
+	}
+
 	var packages []core.DynamicPluginPackage
 	if err := json.Unmarshal(data, &packages); err != nil {
 		return err
 	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range packages {
@@ -51,7 +72,8 @@ func (s *pluginStore) load() error {
 		if err := pkg.Validate(); err != nil {
 			return err
 		}
-		s.packages[pkg.Manifest.Name] = &pkg
+		record := recordFromPackage(&pkg)
+		s.records[record.Name] = record
 	}
 	return nil
 }
@@ -62,7 +84,15 @@ func (s *pluginStore) install(pkg *core.DynamicPluginPackage) error {
 	}
 
 	s.mu.Lock()
-	s.packages[pkg.Manifest.Name] = pkg
+	record, ok := s.records[pkg.Manifest.Name]
+	if !ok {
+		record = recordFromPackage(pkg)
+		s.records[record.Name] = record
+	} else {
+		upsertPluginVersion(record, pkg)
+		record.ActiveVersion = pkg.Manifest.Version
+		record.Disabled = false
+	}
 	snapshot := s.snapshotLocked()
 	s.mu.Unlock()
 	return s.save(snapshot)
@@ -74,11 +104,51 @@ func (s *pluginStore) remove(name string) error {
 		return fmt.Errorf("plugin name is required")
 	}
 	s.mu.Lock()
-	if _, ok := s.packages[name]; !ok {
+	if _, ok := s.records[name]; !ok {
 		s.mu.Unlock()
 		return fmt.Errorf("plugin %s not found", name)
 	}
-	delete(s.packages, name)
+	delete(s.records, name)
+	snapshot := s.snapshotLocked()
+	s.mu.Unlock()
+	return s.save(snapshot)
+}
+
+func (s *pluginStore) setEnabled(name string, enabled bool) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("plugin name is required")
+	}
+	s.mu.Lock()
+	record, ok := s.records[name]
+	if !ok {
+		s.mu.Unlock()
+		return fmt.Errorf("plugin %s not found", name)
+	}
+	record.Disabled = !enabled
+	snapshot := s.snapshotLocked()
+	s.mu.Unlock()
+	return s.save(snapshot)
+}
+
+func (s *pluginStore) rollback(name string, version string) error {
+	name = strings.TrimSpace(name)
+	version = strings.TrimSpace(version)
+	if name == "" || version == "" {
+		return fmt.Errorf("plugin name and version are required")
+	}
+	s.mu.Lock()
+	record, ok := s.records[name]
+	if !ok {
+		s.mu.Unlock()
+		return fmt.Errorf("plugin %s not found", name)
+	}
+	if !recordHasVersion(record, version) {
+		s.mu.Unlock()
+		return fmt.Errorf("plugin %s version %s not found", name, version)
+	}
+	record.ActiveVersion = version
+	record.Disabled = false
 	snapshot := s.snapshotLocked()
 	s.mu.Unlock()
 	return s.save(snapshot)
@@ -88,9 +158,15 @@ func (s *pluginStore) list() []core.DynamicPluginManifest {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	plugins := make([]core.DynamicPluginManifest, 0, len(s.packages))
-	for _, pkg := range s.packages {
-		plugins = append(plugins, pkg.Manifest)
+	plugins := make([]core.DynamicPluginManifest, 0, len(s.records))
+	for _, record := range s.records {
+		pkg := activePluginPackage(record)
+		if pkg == nil {
+			continue
+		}
+		manifest := pkg.Manifest
+		manifest.Disabled = record.Disabled
+		plugins = append(plugins, manifest)
 	}
 	sort.Slice(plugins, func(i, j int) bool {
 		return plugins[i].Name < plugins[j].Name
@@ -98,10 +174,36 @@ func (s *pluginStore) list() []core.DynamicPluginManifest {
 	return plugins
 }
 
+func (s *pluginStore) versions(name string) ([]core.DynamicPluginManifest, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("plugin name is required")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	record, ok := s.records[name]
+	if !ok {
+		return nil, fmt.Errorf("plugin %s not found", name)
+	}
+	versions := make([]core.DynamicPluginManifest, 0, len(record.Versions))
+	for _, pkg := range record.Versions {
+		manifest := pkg.Manifest
+		manifest.Disabled = record.Disabled || manifest.Version != record.ActiveVersion
+		versions = append(versions, manifest)
+	}
+	sort.Slice(versions, func(i, j int) bool {
+		return versions[i].Version > versions[j].Version
+	})
+	return versions, nil
+}
+
 func (s *pluginStore) commandNames() []string {
 	seen := make(map[string]bool)
 	names := []string{}
 	for _, plugin := range s.list() {
+		if plugin.Disabled {
+			continue
+		}
 		for _, name := range plugin.CommandNames() {
 			if !seen[name] {
 				seen[name] = true
@@ -116,7 +218,14 @@ func (s *pluginStore) commandNames() []string {
 func (s *pluginStore) findCommand(commandName string) (*core.DynamicPluginPackage, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for _, pkg := range s.packages {
+	for _, record := range s.records {
+		if record.Disabled {
+			continue
+		}
+		pkg := activePluginPackage(record)
+		if pkg == nil {
+			continue
+		}
 		for _, command := range pkg.Manifest.Commands {
 			if command.Name == commandName {
 				return clonePluginPackage(pkg), true
@@ -126,19 +235,20 @@ func (s *pluginStore) findCommand(commandName string) (*core.DynamicPluginPackag
 	return nil, false
 }
 
-func (s *pluginStore) snapshotLocked() []core.DynamicPluginPackage {
-	packages := make([]core.DynamicPluginPackage, 0, len(s.packages))
-	for _, pkg := range s.packages {
-		packages = append(packages, *clonePluginPackage(pkg))
+func (s *pluginStore) snapshotLocked() []pluginRecord {
+	records := make([]pluginRecord, 0, len(s.records))
+	for _, record := range s.records {
+		cloned := clonePluginRecord(record)
+		records = append(records, *cloned)
 	}
-	sort.Slice(packages, func(i, j int) bool {
-		return packages[i].Manifest.Name < packages[j].Manifest.Name
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].Name < records[j].Name
 	})
-	return packages
+	return records
 }
 
-func (s *pluginStore) save(packages []core.DynamicPluginPackage) error {
-	data, err := json.MarshalIndent(packages, "", "  ")
+func (s *pluginStore) save(records []pluginRecord) error {
+	data, err := json.MarshalIndent(records, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -151,9 +261,93 @@ func clonePluginPackage(pkg *core.DynamicPluginPackage) *core.DynamicPluginPacka
 	}
 	cloned := *pkg
 	cloned.Manifest.OS = append([]string(nil), pkg.Manifest.OS...)
+	cloned.Manifest.Permissions = append([]string(nil), pkg.Manifest.Permissions...)
 	cloned.Manifest.Commands = append([]core.DynamicPluginCommand(nil), pkg.Manifest.Commands...)
 	cloned.Files = append([]core.DynamicPluginFile(nil), pkg.Files...)
 	return &cloned
+}
+
+func clonePluginRecord(record *pluginRecord) *pluginRecord {
+	if record == nil {
+		return nil
+	}
+	cloned := *record
+	cloned.Versions = make([]core.DynamicPluginPackage, 0, len(record.Versions))
+	for i := range record.Versions {
+		cloned.Versions = append(cloned.Versions, *clonePluginPackage(&record.Versions[i]))
+	}
+	return &cloned
+}
+
+func recordFromPackage(pkg *core.DynamicPluginPackage) *pluginRecord {
+	cloned := clonePluginPackage(pkg)
+	return &pluginRecord{
+		Name:          cloned.Manifest.Name,
+		ActiveVersion: cloned.Manifest.Version,
+		Disabled:      cloned.Manifest.Disabled,
+		Versions:      []core.DynamicPluginPackage{*cloned},
+	}
+}
+
+func normalizePluginRecord(record *pluginRecord) error {
+	record.Name = strings.TrimSpace(record.Name)
+	if record.Name == "" {
+		return fmt.Errorf("plugin record name is required")
+	}
+	if len(record.Versions) == 0 {
+		return fmt.Errorf("plugin %s has no versions", record.Name)
+	}
+	for i := range record.Versions {
+		if err := record.Versions[i].Validate(); err != nil {
+			return err
+		}
+		if record.Versions[i].Manifest.Name != record.Name {
+			return fmt.Errorf("plugin record %s contains package %s", record.Name, record.Versions[i].Manifest.Name)
+		}
+	}
+	if strings.TrimSpace(record.ActiveVersion) == "" || !recordHasVersion(record, record.ActiveVersion) {
+		record.ActiveVersion = record.Versions[len(record.Versions)-1].Manifest.Version
+	}
+	return nil
+}
+
+func upsertPluginVersion(record *pluginRecord, pkg *core.DynamicPluginPackage) {
+	cloned := clonePluginPackage(pkg)
+	for i := range record.Versions {
+		if record.Versions[i].Manifest.Version == cloned.Manifest.Version {
+			record.Versions[i] = *cloned
+			return
+		}
+	}
+	record.Versions = append(record.Versions, *cloned)
+}
+
+func recordHasVersion(record *pluginRecord, version string) bool {
+	for i := range record.Versions {
+		if record.Versions[i].Manifest.Version == version {
+			return true
+		}
+	}
+	return false
+}
+
+func activePluginPackage(record *pluginRecord) *core.DynamicPluginPackage {
+	if record == nil {
+		return nil
+	}
+	for i := range record.Versions {
+		if record.Versions[i].Manifest.Version == record.ActiveVersion {
+			pkg := clonePluginPackage(&record.Versions[i])
+			pkg.Manifest.Disabled = record.Disabled
+			return pkg
+		}
+	}
+	if len(record.Versions) == 0 {
+		return nil
+	}
+	pkg := clonePluginPackage(&record.Versions[len(record.Versions)-1])
+	pkg.Manifest.Disabled = record.Disabled
+	return pkg
 }
 
 func buildPluginPowerShell(pkg *core.DynamicPluginPackage, args []string) (string, error) {

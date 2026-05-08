@@ -34,6 +34,36 @@ func runPlugin(client *core.Client, args []string) int {
 		return runPluginInstall(client, args[1])
 	case "list":
 		return runPluginList(client)
+	case "enable":
+		if len(args) != 2 {
+			fmt.Fprintln(os.Stderr, yellow("usage: trish plugin enable <name>"))
+			return 1
+		}
+		return runPluginToggle(client, args[1], true)
+	case "disable":
+		if len(args) != 2 {
+			fmt.Fprintln(os.Stderr, yellow("usage: trish plugin disable <name>"))
+			return 1
+		}
+		return runPluginToggle(client, args[1], false)
+	case "versions":
+		if len(args) != 2 {
+			fmt.Fprintln(os.Stderr, yellow("usage: trish plugin versions <name>"))
+			return 1
+		}
+		return runPluginVersions(client, args[1])
+	case "rollback":
+		if len(args) != 3 {
+			fmt.Fprintln(os.Stderr, yellow("usage: trish plugin rollback <name> <version>"))
+			return 1
+		}
+		return runPluginRollback(client, args[1], args[2])
+	case "test":
+		if len(args) != 2 {
+			fmt.Fprintln(os.Stderr, yellow("usage: trish plugin test <path-or-git-url>"))
+			return 1
+		}
+		return runPluginTest(args[1])
 	case "remove", "uninstall":
 		if len(args) != 2 {
 			fmt.Fprintln(os.Stderr, yellow("usage: trish plugin remove <name>"))
@@ -85,6 +115,81 @@ func runPluginInstall(client *core.Client, source string) int {
 	return 0
 }
 
+func runPluginToggle(client *core.Client, name string, enabled bool) int {
+	var (
+		result string
+		err    error
+	)
+	if enabled {
+		result, err = client.EnablePlugin(name)
+	} else {
+		result, err = client.DisablePlugin(name)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, red(err.Error()))
+		return 1
+	}
+	fmt.Println(green(result))
+	return 0
+}
+
+func runPluginVersions(client *core.Client, name string) int {
+	versions, err := client.ListPluginVersions(name)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, red(err.Error()))
+		return 1
+	}
+	rows := make([][]string, 0, len(versions))
+	for _, plugin := range versions {
+		state := green("active")
+		if plugin.Disabled {
+			state = dim("stored")
+		}
+		rows = append(rows, []string{
+			plugin.Version,
+			state,
+			shortChecksum(plugin.ChecksumSHA256),
+			strings.Join(plugin.Permissions, ", "),
+			plugin.Source,
+		})
+	}
+	printTable([]string{"Version", "State", "Checksum", "Permissions", "Source"}, rows)
+	return 0
+}
+
+func runPluginRollback(client *core.Client, name string, version string) int {
+	result, err := client.RollbackPlugin(name, version)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, red(err.Error()))
+		return 1
+	}
+	fmt.Println(green(result))
+	return 0
+}
+
+func runPluginTest(source string) int {
+	pkg, cleanup, err := packagePluginSource(source)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, red(err.Error()))
+		return 1
+	}
+
+	fmt.Println(green("plugin package is valid"))
+	printTable([]string{"Field", "Value"}, [][]string{
+		{"Name", cyan(pkg.Manifest.Name)},
+		{"Version", pkg.Manifest.Version},
+		{"Entry", pkg.Manifest.Entry},
+		{"Shell", pkg.Manifest.Shell},
+		{"Commands", strings.Join(pkg.Manifest.CommandNames(), ", ")},
+		{"Permissions", strings.Join(pkg.Manifest.Permissions, ", ")},
+		{"Checksum", pkg.Manifest.ChecksumSHA256},
+	})
+	return 0
+}
+
 func runPluginUpdateAll(client *core.Client) int {
 	plugins, err := client.ListPlugins()
 	if err != nil {
@@ -125,14 +230,20 @@ func runPluginList(client *core.Client) int {
 	rows := make([][]string, 0, len(plugins))
 	for _, plugin := range plugins {
 		commands := plugin.CommandNames()
+		state := green("enabled")
+		if plugin.Disabled {
+			state = yellow("disabled")
+		}
 		rows = append(rows, []string{
 			cyan(plugin.Name),
 			plugin.Version,
+			state,
 			strings.Join(commands, ", "),
+			shortChecksum(plugin.ChecksumSHA256),
 			plugin.Source,
 		})
 	}
-	printTable([]string{"Plugin", "Version", "Commands", "Source"}, rows)
+	printTable([]string{"Plugin", "Version", "State", "Commands", "Checksum", "Source"}, rows)
 	return 0
 }
 
@@ -148,13 +259,18 @@ func runPluginStatus(client *core.Client, agentID string) int {
 		fmt.Println(bold("Server plugins"))
 		rows := make([][]string, 0, len(plugins))
 		for _, plugin := range plugins {
+			state := green("enabled")
+			if plugin.Disabled {
+				state = yellow("disabled")
+			}
 			rows = append(rows, []string{
 				cyan(plugin.Name),
 				plugin.Version,
+				state,
 				strings.Join(plugin.CommandNames(), ", "),
 			})
 		}
-		printTable([]string{"Plugin", "Version", "Commands"}, rows)
+		printTable([]string{"Plugin", "Version", "State", "Commands"}, rows)
 	}
 
 	if strings.TrimSpace(agentID) == "" {
@@ -226,8 +342,20 @@ func printPluginHelp() {
 	fmt.Println(bold("Plugin commands"))
 	fmt.Println("  " + cyan("trish plugin install") + " <path-or-git-url>")
 	fmt.Println("  " + cyan("trish plugin update") + " <path-or-git-url|all>")
+	fmt.Println("  " + cyan("trish plugin test") + " <path-or-git-url>")
 	fmt.Println("  " + cyan("trish plugin list"))
+	fmt.Println("  " + cyan("trish plugin enable") + " <name>")
+	fmt.Println("  " + cyan("trish plugin disable") + " <name>")
+	fmt.Println("  " + cyan("trish plugin versions") + " <name>")
+	fmt.Println("  " + cyan("trish plugin rollback") + " <name> <version>")
 	fmt.Println("  " + cyan("trish plugin status") + " [agent-id]")
 	fmt.Println("  " + cyan("trish plugin info") + " [agent-id]")
 	fmt.Println("  " + cyan("trish plugin remove") + " <name>")
+}
+
+func shortChecksum(value string) string {
+	if len(value) <= 12 {
+		return value
+	}
+	return value[:12]
 }

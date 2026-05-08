@@ -5,6 +5,7 @@
   "entry": "helloWorld.ps1",
   "shell": "powershell",
   "os": ["windows"],
+  "permissions": ["env:read", "process:run"],
   "commands": [
     {
       "name": "hello",

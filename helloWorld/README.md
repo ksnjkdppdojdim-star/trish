@@ -16,6 +16,7 @@ This directory is a minimal example of a Trish dynamic plugin. It is meant to be
   "entry": "helloWorld.ps1",
   "shell": "powershell",
   "os": ["windows"],
+  "permissions": ["env:read", "process:run"],
   "commands": [
     { "name": "hello" }
   ]
@@ -29,6 +30,7 @@ Important fields:
 - `entry`: script file to execute.
 - `shell`: currently `powershell`, `pwsh`, or `cmd`.
 - `os`: target agent operating systems. Use `["windows"]` for Windows agents.
+- `permissions`: declarative permissions requested by the plugin. The server stores and displays them.
 - `commands`: command names exposed in `trish info <agent>`.
 
 ## Install
@@ -43,6 +45,7 @@ Then check:
 
 ```powershell
 .\trish.exe plugin list
+.\trish.exe plugin versions helloWorld
 .\trish.exe info DESKTOP-0JSGE83
 ```
 
@@ -69,6 +72,13 @@ After editing this plugin:
 
 ```powershell
 .\trish.exe plugin update M:\trish\trish\helloWorld
+```
+
+You can temporarily hide the command from agents:
+
+```powershell
+.\trish.exe plugin disable helloWorld
+.\trish.exe plugin enable helloWorld
 ```
 
 For Git-hosted plugins, the server remembers the original source, so later you can use:

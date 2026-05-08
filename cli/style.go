@@ -150,5 +150,7 @@ func printCommandHint() {
 	fmt.Println(bold("Commands"))
 	fmt.Println("  " + cyan("list") + " | " + cyan("use <agent>") + " | " + cyan("current") + " | " + cyan("info [agent]") + " | " + cyan("ping [agent]"))
 	fmt.Println("  " + cyan("exec [agent] <cmd> [args]") + " | " + cyan("agent <freeze|unfreeze|stop|restart> [agent]"))
-	fmt.Println("  " + cyan("plugin <install|update|list|status|remove>") + " | " + cyan("start gui") + " | " + cyan("help") + " | " + cyan("exit"))
+	fmt.Println("  " + cyan("exec --all <cmd>") + " | " + cyan("exec --group <name> <cmd>") + " | " + cyan("group <...>") + " | " + cyan("tag <...>"))
+	fmt.Println("  " + cyan("plugin <install|update|test|list|enable|disable|versions|rollback|status|remove>"))
+	fmt.Println("  " + cyan("start gui") + " | " + cyan("help") + " | " + cyan("exit"))
 }
